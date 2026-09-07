@@ -1,13 +1,16 @@
-/*! Faber Studio — pannello editor drag-and-drop per le dashboard di Home
- *  Assistant. Non è un'altra card da aggiungere a una vista: è un pannello a
- *  sé (una dashboard dedicata con un'unica vista di tipo "panel") che
- *  permette di scegliere una vista esistente, trascinarci sopra le card già
- *  pronte della famiglia Faber (Mini Card, Centro Bucato, Centro
+/*! Faber Layout — pannello editor drag-and-drop per le dashboard di Home
+ *  Assistant (rinominato da "Faber Studio": quel nome è già usato dall'app
+ *  Video Social). Non è un'altra card da aggiungere a una vista: è un
+ *  pannello a sé (una dashboard dedicata con un'unica vista di tipo "panel")
+ *  che permette di scegliere una vista esistente, trascinarci sopra le card
+ *  già pronte della famiglia Faber (Mini Card, Centro Bucato, Centro
  *  Elettrodomestici, Centro Sicurezza, Energia Consumi), configurarle col
- *  loro editor VERO (nessuno riscritto qui), e salvare.
+ *  loro editor VERO (nessuno riscritto qui), e salvare — oppure descrivere
+ *  a parole cosa serve e farselo generare (via Claude, cookie di Cristian,
+ *  attraverso il proxy /api/faber_control/ già esistente).
  */
-const ST_VERSION = "1.0.0";
-console.info(`%c FABER STUDIO %c v${ST_VERSION} `,
+const ST_VERSION = "1.1.0";
+console.info(`%c FABER LAYOUT %c v${ST_VERSION} `,
   "color:#1c1400;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#ffe9c2;background:#1a1b21;border-radius:0 4px 4px 0");
 
@@ -77,6 +80,12 @@ const ST_TEMPLATES = [
     stub: { type: "custom:energia-consumi-card", title: "Consumi di casa", days_back: 8,
       open_on: "today", prezzo_kwh: 0.30, soglia_media: 33, soglia_alta: 66, lampeggio_record: true } },
 ];
+
+// Campi dei template che l'IA può riempire con un entity_id reale — sempre
+// scelto da una lista di candidati che passiamo noi, mai inventato (stesso
+// principio della Fucina Icone: il modello sceglie solo tra un vocabolario
+// chiuso, non genera testo libero che potremmo dover convalidare alla cieca).
+const ST_ENTITY_FIELDS = ["power", "energy", "switch", "temp", "humidity", "climate", "lock", "door_sensor", "battery"];
 
 const ST_CARDTAG_BY_TYPE = {};
 const ST_EDITORTAG_BY_CARDTAG = {};
@@ -171,6 +180,13 @@ const ST_CSS = `
   .st-tpl{display:flex;align-items:center;gap:6px;padding:10px 13px;border-radius:14px;background:rgba(255,255,255,.05);
     border:1px solid rgba(255,255,255,.1);font-size:12.5px;font-weight:700;cursor:grab;touch-action:none}
   .st-tpl ha-icon{--mdc-icon-size:18px;color:#ffb020}
+  .st-ai-box{background:linear-gradient(150deg,rgba(255,176,32,.1),transparent 65%);
+    border:1px solid rgba(255,176,32,.3);border-radius:14px;padding:12px 14px;margin-bottom:16px}
+  .st-ai-row{display:flex;gap:8px}
+  .st-ai-row input{flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.05);color:#eaf1f8;font:inherit;font-size:13.5px}
+  .st-ai-status{margin-top:8px;font-size:11.5px;color:#93a1b0;line-height:1.5}
+  .st-ai-status.err{color:#ff5442}
   .st-ghost{position:fixed;z-index:99;transform:translate(-50%,-50%);display:flex;align-items:center;gap:6px;
     padding:10px 14px;border-radius:14px;background:#2a2f3a;border:1px solid rgba(255,176,32,.5);
     color:#eaf1f8;font-size:12.5px;font-weight:700;pointer-events:none;box-shadow:0 10px 30px rgba(0,0,0,.5)}
@@ -241,8 +257,8 @@ class StudioCard extends HTMLElement {
   _renderHome() {
     const root = this._screenRoot();
     root.innerHTML = `
-      <div class="st-hometitle">🛠️ Faber Studio</div>
-      <div class="st-home-sub">Costruisci le tue dashboard trascinando le card già pronte.</div>
+      <div class="st-hometitle">🛠️ Faber Layout</div>
+      <div class="st-home-sub">Costruisci le tue dashboard trascinando le card già pronte — o descrivi cosa ti serve e te la genero io.</div>
       <div class="st-home-tiles">
         <div class="st-hometile" id="stGoEdit">
           <div class="st-hometile-ic">🧩</div>
@@ -351,6 +367,14 @@ class StudioCard extends HTMLElement {
       <button class="st-fab" id="stOpenPalette">+</button>
       <div class="st-palette" id="stPalette">
         <div class="st-palette-handle"></div>
+        <div class="st-ai-box">
+          <div class="st-pal-group-title">✨ Descrivi e genera</div>
+          <div class="st-ai-row">
+            <input type="text" id="stAiDesc" placeholder="es. presa della lavatrice in lavanderia" maxlength="140">
+            <button class="st-btn st-btn-primary" id="stAiGo">Genera</button>
+          </div>
+          <div class="st-ai-status" id="stAiStatus" hidden></div>
+        </div>
         ${this._paletteHTML()}
       </div>`}`;
     this._wireTopbar(root);
@@ -441,6 +465,86 @@ class StudioCard extends HTMLElement {
     document.addEventListener("pointerup", up, { once: true });
   }
 
+  // ---------------- Descrivi e genera (Claude via cookie, sul backend) ----------------
+  // Il browser dentro Home Assistant non ha accesso diretto a un LLM (niente
+  // window.claude qui, quella è un'esclusiva degli Artifact claude.ai): il
+  // giro passa dal proxy /api/faber_control/ già registrato dal componente
+  // FaberControl, che raggiunge il backend anche stando su un'altra rete —
+  // stesso canale già usato dalla chat di Faber Control, nessuno nuovo.
+
+  // Candidati reali per l'IA: entità il cui id o nome contiene una parola
+  // della descrizione — stesso principio di mcSuggestEntities in
+  // mini-card.js, ma qui il risultato finisce in un prompt di testo invece
+  // che scelto direttamente dall'utente.
+  _gatherCandidates(desc) {
+    const hass = this._hass;
+    if (!hass) return [];
+    const words = (desc || "").toLowerCase().split(/[^a-zàèéìòù0-9]+/).filter(w => w.length > 2);
+    const prefixes = ["switch.", "light.", "input_boolean.", "sensor.", "climate.", "lock.", "binary_sensor."];
+    const ids = Object.keys(hass.states).filter(id => prefixes.some(p => id.startsWith(p)));
+    const score = id => {
+      const fn = ((hass.states[id].attributes || {}).friendly_name || "").toLowerCase();
+      const hay = fn + " " + id.toLowerCase();
+      return words.reduce((s, w) => s + (hay.includes(w) ? 1 : 0), 0);
+    };
+    let scored = ids.map(id => ({ id, s: words.length ? score(id) : 0 }));
+    if (words.length) scored = scored.filter(x => x.s > 0);
+    scored.sort((a, b) => b.s - a.s);
+    return scored.slice(0, 40).map(x => ({ id: x.id, name: (hass.states[x.id].attributes || {}).friendly_name || x.id }));
+  }
+
+  _buildLayoutPrompt(desc, candidates) {
+    const tplLines = ST_TEMPLATES.map(t => {
+      const fields = Object.keys(t.stub).filter(k => ST_ENTITY_FIELDS.includes(k));
+      return `- "${t.id}" (${t.label}) — campi: ${fields.length ? fields.join(", ") : "nessuno"}`;
+    }).join("\n");
+    const candLines = candidates.length
+      ? candidates.map(c => `${c.id} | ${c.name}`).join("\n")
+      : "(nessuna entità sembra corrispondere alla descrizione — lascia i campi vuoti)";
+    return `Devi scegliere quale "card" creare per una dashboard di Home Assistant, in base a una richiesta libera in italiano, e quali entità reali usare — SOLO tra quelle elencate sotto, non inventarne mai altre.
+
+CARD DISPONIBILI (scegline una sola, la più adatta):
+${tplLines}
+
+ENTITÀ REALI DISPONIBILI (usa solo questi entity_id esatti, o lascia vuoto se nessuna è adatta):
+${candLines}
+
+RICHIESTA: "${desc}"
+
+Rispondi SOLO con un oggetto JSON, nessun altro testo, con questa forma esatta:
+{"templateId": "<uno degli id sopra>", "name": "<nome breve in italiano, max 30 caratteri>", "fields": {"<nome campo>": "<entity_id dalla lista, oppure stringa vuota se nessuno è adatto>"}}
+Includi in "fields" SOLO i campi validi per la card scelta (quelli elencati sopra per quella card).`;
+  }
+
+  async _generateFromDescription(desc) {
+    const candidates = this._gatherCandidates(desc);
+    const prompt = this._buildLayoutPrompt(desc, candidates);
+    const res = await fetch("/api/faber_control/faber-layout/ask", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || ("HTTP " + res.status));
+    let parsed;
+    try {
+      const text = String(data.text || "").trim().replace(/^```[a-zA-Z]*\n?/, "").replace(/```\s*$/, "").trim();
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error("Risposta non interpretabile");
+    }
+    const t = ST_TEMPLATES.find(x => x.id === parsed.templateId);
+    if (!t) throw new Error("Card non riconosciuta");
+    const candIds = new Set(candidates.map(c => c.id));
+    const overrides = {};
+    if (parsed.name && typeof parsed.name === "string") overrides.name = parsed.name.trim().slice(0, 40);
+    const fields = (parsed.fields && typeof parsed.fields === "object") ? parsed.fields : {};
+    Object.keys(fields).forEach(k => {
+      if (!ST_ENTITY_FIELDS.includes(k) || !(k in t.stub)) return;
+      const v = fields[k];
+      overrides[k] = (typeof v === "string" && candIds.has(v)) ? v : "";
+    });
+    return { templateId: t.id, overrides };
+  }
+
   _paletteHTML() {
     const groups = {};
     ST_TEMPLATES.forEach(t => { (groups[t.group] = groups[t.group] || []).push(t); });
@@ -461,6 +565,30 @@ class StudioCard extends HTMLElement {
     pal.querySelectorAll(".st-tpl").forEach(tpl => {
       tpl.addEventListener("pointerdown", e => this._onTemplatePointerDown(e, tpl.dataset.tid, pal));
     });
+
+    const aiBtn = root.querySelector("#stAiGo");
+    const aiInput = root.querySelector("#stAiDesc");
+    const aiStatus = root.querySelector("#stAiStatus");
+    const setAiStatus = (msg, isErr) => {
+      aiStatus.hidden = !msg;
+      aiStatus.textContent = msg || "";
+      aiStatus.classList.toggle("err", !!isErr);
+    };
+    const runAi = async () => {
+      const desc = (aiInput.value || "").trim();
+      if (!desc) { setAiStatus("Scrivi prima una breve descrizione.", true); return; }
+      aiBtn.disabled = true; aiBtn.textContent = "Sto pensando…"; setAiStatus("");
+      try {
+        const { templateId, overrides } = await this._generateFromDescription(desc);
+        this._addCardFromTemplate(templateId, null, overrides);
+      } catch (e) {
+        setAiStatus("Non ci sono riuscito: " + (e && e.message ? e.message : "errore"), true);
+      } finally {
+        aiBtn.disabled = false; aiBtn.textContent = "Genera";
+      }
+    };
+    if (aiBtn) aiBtn.onclick = runAi;
+    if (aiInput) aiInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); runAi(); } });
   }
 
   // Trascina un template dalla libreria su una sezione per aggiungerlo lì; un
@@ -500,7 +628,7 @@ class StudioCard extends HTMLElement {
     document.addEventListener("pointerup", up, { once: true });
   }
 
-  _addCardFromTemplate(tid, si) {
+  _addCardFromTemplate(tid, si, overrides) {
     const t = ST_TEMPLATES.find(x => x.id === tid);
     if (!t) return;
     const view = this._view;
@@ -511,7 +639,8 @@ class StudioCard extends HTMLElement {
     }
     const section = view.sections[si];
     section.cards = section.cards || [];
-    section.cards.push(JSON.parse(JSON.stringify(t.stub)));
+    const card = Object.assign(JSON.parse(JSON.stringify(t.stub)), overrides || {});
+    section.cards.push(card);
     this._dirty = true;
     const ci = section.cards.length - 1;
     this._renderEdit();
@@ -618,8 +747,8 @@ customElements.define("studio-card", StudioCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "studio-card",
-  name: "Faber Studio",
-  description: "Pannello editor drag-and-drop per le dashboard: trascina le card già pronte della famiglia Faber (Mini Card, Centro Bucato, Centro Elettrodomestici, Centro Sicurezza, Energia) su una vista esistente, configurale col loro editor vero, salva. Va usato in una vista dedicata di tipo 'panel', non aggiunto dentro una dashboard normale.",
+  name: "Faber Layout",
+  description: "Pannello editor per le dashboard: trascina le card già pronte della famiglia Faber (Mini Card, Centro Bucato, Centro Elettrodomestici, Centro Sicurezza, Energia) su una vista esistente, oppure descrivi cosa ti serve e fattelo generare — poi configura con l'editor vero e salva. Va usato in una vista dedicata di tipo 'panel', non aggiunto dentro una dashboard normale.",
   preview: false,
   documentationURL: "https://github.com/cristianwebonline/ha-studio-card",
 });
