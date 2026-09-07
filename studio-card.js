@@ -9,7 +9,7 @@
  *  a parole cosa serve e farselo generare (via Claude, cookie di Cristian,
  *  attraverso il proxy /api/faber_control/ già esistente).
  */
-const ST_VERSION = "1.1.0";
+const ST_VERSION = "1.2.0";
 console.info(`%c FABER LAYOUT %c v${ST_VERSION} `,
   "color:#1c1400;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#ffe9c2;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -79,6 +79,15 @@ const ST_TEMPLATES = [
     cardTag: "energia-consumi-card", editorTag: "energia-consumi-card-editor",
     stub: { type: "custom:energia-consumi-card", title: "Consumi di casa", days_back: 8,
       open_on: "today", prezzo_kwh: 0.30, soglia_media: 33, soglia_alta: 66, lampeggio_record: true } },
+  { id: "sc-blank", label: "Smart Card (tela vuota)", icon: "mdi:palette-swatch-outline", group: "Smart Card",
+    cardTag: "smart-card", editorTag: "smart-card-editor",
+    stub: { type: "custom:smart-card", name: "Smart Card", canvas: { w: 100, h: 50 },
+      elements: [
+        { id: "el_title", type: "text", x: 8, y: 8, w: 60, h: 14, text: "Titolo", fontSize: 18, weight: 800, align: "left",
+          light: { color: "#171a20" }, dark: { color: "#eaf1f8" } },
+        { id: "el_val", type: "sensor-value", x: 8, y: 26, w: 40, h: 18, entity: "", decimals: 1, unit: "", fontSize: 22,
+          light: { color: "#171a20" }, dark: { color: "#eaf1f8" } },
+      ] } },
 ];
 
 // Campi dei template che l'IA può riempire con un entity_id reale — sempre
