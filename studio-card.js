@@ -9,7 +9,7 @@
  *  a parole cosa serve e farselo generare (via Claude, cookie di Cristian,
  *  attraverso il proxy /api/faber_control/ già esistente).
  */
-const ST_VERSION = "1.2.1";
+const ST_VERSION = "1.3.0";
 console.info(`%c FABER LAYOUT %c v${ST_VERSION} `,
   "color:#1c1400;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#ffe9c2;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -88,6 +88,19 @@ const ST_TEMPLATES = [
         { id: "el_val", type: "sensor-value", x: 8, y: 26, w: 40, h: 18, entity: "", decimals: 1, unit: "", fontSize: 22,
           light: { color: "#171a20" }, dark: { color: "#eaf1f8" } },
       ] } },
+
+  // Cornice della vista: non mostrano un dispositivo, cambiano l'aspetto
+  // complessivo della dashboard (vedi repo ha-faber-shell).
+  { id: "fs-header", label: "Intestazione (orologio)", icon: "mdi:clock-outline", group: "Cornice",
+    cardTag: "faber-header", editorTag: "faber-header-editor",
+    stub: { type: "custom:faber-header", greeting: "", weather: "", temperature: "", seconds: false, chips: [] } },
+  { id: "fs-nav", label: "Barra di navigazione", icon: "mdi:dock-bottom", group: "Cornice",
+    cardTag: "faber-nav", editorTag: "faber-nav-editor",
+    stub: { type: "custom:faber-nav", fixed: true, items: [
+      { id: "nav1", icon: "mdi:home-variant", label: "Casa", path: "", center: true },
+      { id: "nav2", icon: "mdi:chart-box-outline", label: "Consumi", path: "" },
+      { id: "nav3", icon: "mdi:dots-horizontal", label: "Altro", path: "" },
+    ] } },
 ];
 
 // Campi dei template che l'IA può riempire con un entity_id reale — sempre
