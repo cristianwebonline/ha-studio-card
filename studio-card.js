@@ -9,7 +9,7 @@
  *  a parole cosa serve e farselo generare (via Claude, cookie di Cristian,
  *  attraverso il proxy /api/faber_control/ già esistente).
  */
-const ST_VERSION = "1.2.0";
+const ST_VERSION = "1.2.1";
 console.info(`%c FABER LAYOUT %c v${ST_VERSION} `,
   "color:#1c1400;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#ffe9c2;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -295,8 +295,16 @@ class StudioCard extends HTMLElement {
     const targets = await stLoadNavTargets(this._hass);
     const list = root.querySelector("#stList");
     const renderList = filter => {
-      const f = (filter || "").toLowerCase().trim();
-      const matches = targets.filter(t => !f || (t.dashTitle + " " + t.viewTitle).toLowerCase().includes(f));
+      // Ogni parola cercata deve comparire da qualche parte (in qualunque
+      // ordine) — non l'intera frase come un'unica sequenza continua,
+      // altrimenti "soggiorno prova" non troverebbe mai "Prova ... Soggiorno
+      // (prova)" solo perché nel titolo vero le parole sono in un altro ordine.
+      const words = (filter || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+      const matches = targets.filter(t => {
+        if (!words.length) return true;
+        const hay = (t.dashTitle + " " + t.viewTitle).toLowerCase();
+        return words.every(w => hay.includes(w));
+      });
       list.innerHTML = matches.length ? matches.map((t, i) => `
         <div class="st-listitem" data-i="${i}">
           <div class="st-listitem-tt">${this._esc(t.viewTitle)}${t.mode !== "storage" ? '<span class="st-readonly-tag">sola lettura</span>' : ""}</div>
